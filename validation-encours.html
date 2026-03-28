@@ -300,10 +300,19 @@
     <div id="state-auth">
       <div class="state-icon">🔐</div>
       <div class="state-text">
-        Configurez vos paramètres Azure AD et SharePoint<br>
-        puis connectez-vous pour charger les encours.
+        Chargez votre fichier Excel d'encours<br>
+        depuis SharePoint ou depuis votre ordinateur.
       </div>
-      <button class="btn btn-primary" onclick="login()">Se connecter avec Microsoft</button>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:8px;">
+        <button class="btn btn-primary" onclick="login()">☁️ Se connecter avec Microsoft</button>
+        <label class="btn" style="background:#fff;border:1px solid var(--border);cursor:pointer;">
+          📂 Charger un fichier local
+          <input type="file" id="local-file-input" accept=".xlsx,.xls" style="display:none" onchange="loadLocalFile(this)"/>
+        </label>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:12px;text-align:center;">
+        💡 Si la connexion SharePoint ne fonctionne pas encore,<br>chargez le fichier depuis votre ordinateur pour commencer à travailler.
+      </div>
     </div>
 
     <!-- STATE: LOADING -->
@@ -550,6 +559,26 @@ async function loadExcelFile(cfg) {
     toast('Erreur : ' + e.message, 'error');
     showState('auth');
   }
+}
+
+// ═══════════════════════════════════════════════════
+// CHARGEMENT FICHIER LOCAL
+// ═══════════════════════════════════════════════════
+function loadLocalFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  showState('loading', 'Lecture du fichier…');
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const cfg = loadConfig();
+    document.getElementById('footer-file').textContent = file.name + ' (local)';
+    fileItemId = null; // pas de sauvegarde SP possible
+    parseExcel(e.target.result, cfg);
+    showState('table');
+    toast(`${file.name} chargé localement. Export Excel disponible.`, 'info');
+  };
+  reader.onerror = () => { toast('Erreur de lecture du fichier.', 'error'); showState('auth'); };
+  reader.readAsArrayBuffer(file);
 }
 
 // ═══════════════════════════════════════════════════
