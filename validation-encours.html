@@ -425,7 +425,7 @@ function initMsal(cfg) {
   const msalConfig = {
     auth: {
       clientId: cfg.clientId,
-      authority: `https://login.microsoftonline.com/${cfg.tenantId}`,
+      authority: `https://login.microsoftonline.com/common`,
       redirectUri: window.location.href.split('?')[0].split('#')[0]
     },
     cache: { cacheLocation: 'sessionStorage', storeAuthStateInCookie: false }
@@ -444,7 +444,7 @@ async function login() {
   if (!msalInstance) initMsal(cfg);
 
   const loginRequest = {
-    scopes: ['User.Read', 'Files.ReadWrite', 'Sites.ReadWrite.All']
+    scopes: ['User.Read']
   };
 
   try {
@@ -483,85 +483,67 @@ function updateUserUI(account) {
   }
 }
 
-async function getToken() {
-  const cfg = loadConfig();
+// ═══════════════════════════════════════════════════
+// SHAREPOINT REST API (cross-tenant natif)
+// ═══════════════════════════════════════════════════
+async function getSPToken(siteUrl) {
+  const spOrigin = new URL(siteUrl).origin; // ex: https://fenbat2021.sharepoint.com
   const request = {
-    scopes: ['Files.ReadWrite', 'Sites.ReadWrite.All'],
+    scopes: [`${spOrigin}/AllSites.Write`],
     account: currentAccount
   };
   try { return (await msalInstance.acquireTokenSilent(request)).accessToken; }
   catch { return (await msalInstance.acquireTokenPopup(request)).accessToken; }
 }
 
-// ═══════════════════════════════════════════════════
-// GRAPH API – SHAREPOINT
-// ═══════════════════════════════════════════════════
-async function graphGet(url) {
-  const token = await getToken();
-  const r = await fetch(`https://graph.microsoft.com/v1.0${url}`, {
-    headers: { Authorization: `Bearer ${token}` }
+async function spGetBinary(siteUrl, serverRelPath) {
+  const token = await getSPToken(siteUrl);
+  const encodedPath = encodeURIComponent(serverRelPath);
+  const url = `${siteUrl}/_api/web/GetFileByServerRelativePath(decodedurl='${encodedPath}')/$value`;
+  const r = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json;odata=verbose' }
   });
-  if (!r.ok) { const err = await r.json().catch(() => ({})); throw new Error(err.error?.message || r.statusText); }
-  return r.json();
-}
-
-async function graphGetBinary(url) {
-  const token = await getToken();
-  const r = await fetch(`https://graph.microsoft.com/v1.0${url}`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  if (!r.ok) throw new Error(r.statusText);
+  if (!r.ok) throw new Error(`SharePoint ${r.status}: ${r.statusText}`);
   return r.arrayBuffer();
 }
 
-async function graphPut(url, body) {
-  const token = await getToken();
-  const r = await fetch(`https://graph.microsoft.com/v1.0${url}`, {
-    method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream' },
+async function spUpload(siteUrl, folderServerRelPath, filename, body) {
+  const token = await getSPToken(siteUrl);
+  const encodedFolder = encodeURIComponent(folderServerRelPath);
+  const encodedFile = encodeURIComponent(filename);
+  const url = `${siteUrl}/_api/web/GetFolderByServerRelativePath(decodedurl='${encodedFolder}')/Files/Add(overwrite=true,url='${encodedFile}')`;
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json;odata=verbose',
+      'Content-Type': 'application/octet-stream'
+    },
     body
   });
-  if (!r.ok) { const err = await r.json().catch(() => ({})); throw new Error(err.error?.message || r.statusText); }
-  return r.json();
-}
-
-// Extraire le hostname SharePoint
-function parseSiteUrl(siteUrl) {
-  const url = new URL(siteUrl);
-  const host = url.hostname;         // ex: contoso.sharepoint.com
-  const sitePath = url.pathname;     // ex: /sites/MonSite
-  return { host, sitePath };
-}
-
-async function getSiteId(cfg) {
-  const { host, sitePath } = parseSiteUrl(cfg.siteUrl);
-  const data = await graphGet(`/sites/${host}:${sitePath}`);
-  return data.id;
-}
-
-async function getDriveId(siteId, library) {
-  const data = await graphGet(`/sites/${siteId}/drives`);
-  const drive = data.value.find(d => d.name === library || d.webUrl?.endsWith('/' + encodeURIComponent(library)));
-  if (!drive) throw new Error(`Bibliothèque "${library}" introuvable. Vérifiez le nom exact.`);
-  return drive.id;
+  if (!r.ok) { const err = await r.text().catch(() => r.statusText); throw new Error(`Upload: ${r.status} - ${err}`); }
+  return r.json().catch(() => ({}));
 }
 
 async function loadExcelFile(cfg) {
   if (!currentAccount) { toast('Connectez-vous d\'abord.', 'error'); return; }
   showState('loading', 'Connexion à SharePoint…');
   try {
-    const siteId = await getSiteId(cfg);
-    setLoadingText('Recherche de la bibliothèque…');
-    const driveId = await getDriveId(siteId, cfg.library);
-    setLoadingText('Chargement du fichier Excel…');
-
-    // Nettoyer le chemin
+    const siteUrl = cfg.siteUrl.replace(/\/$/, '');
+    const sitePath = new URL(siteUrl).pathname; // ex: /sites/FROGSGESTION
+    const library = cfg.library;
     let filePath = cfg.filePath.startsWith('/') ? cfg.filePath : '/' + cfg.filePath;
-    const fileData = await graphGet(`/drives/${driveId}/root:${filePath}`);
-    fileItemId = { driveId, itemId: fileData.id };
-    document.getElementById('footer-file').textContent = fileData.name;
 
-    // Télécharger le contenu binaire
-    const buffer = await graphGetBinary(`/drives/${driveId}/items/${fileData.id}/content`);
+    // Chemin server-relatif complet
+    const serverRelPath = `${sitePath}/${library}${filePath}`;
+    const fileName = filePath.split('/').pop();
+    const folderRelPath = `${sitePath}/${library}${filePath.substring(0, filePath.lastIndexOf('/'))}`;
+
+    setLoadingText('Chargement du fichier Excel…');
+    const buffer = await spGetBinary(siteUrl, serverRelPath);
+
+    fileItemId = { siteUrl, serverRelPath, folderRelPath, fileName };
+    document.getElementById('footer-file').textContent = fileName;
 
     setLoadingText('Analyse du fichier Excel…');
     parseExcel(buffer, cfg);
@@ -826,9 +808,9 @@ async function confirmSave() {
     const buf = XLSX.write(originalWorkbook, { type: 'array', bookType: 'xlsx' });
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 
-    // Upload vers SharePoint via Graph API
-    const { driveId, itemId } = fileItemId;
-    await graphPut(`/drives/${driveId}/items/${itemId}/content`, blob);
+    // Upload vers SharePoint via REST API
+    const { siteUrl, folderRelPath, fileName } = fileItemId;
+    await spUpload(siteUrl, folderRelPath, fileName, blob);
 
     modifiedCells.clear();
     showState('table');
