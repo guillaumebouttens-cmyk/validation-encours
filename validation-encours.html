@@ -390,12 +390,19 @@ function getConfig() {
   };
 }
 
+// Valeurs par défaut pré-configurées pour GBS Conseil
+const DEFAULTS = {
+  clientId: 'd72768e8-8ed8-4218-bdf6-15114796175f',
+  tenantId: '996167ca-12e4-48a3-92ad-bbd8e5ef4b64',
+  library: 'Documents partagés'
+};
+
 function applyConfigToUI(cfg) {
-  if (!cfg) return;
-  if (cfg.clientId) document.getElementById('cfg-client-id').value = cfg.clientId;
-  if (cfg.tenantId) document.getElementById('cfg-tenant-id').value = cfg.tenantId;
+  if (!cfg) cfg = {};
+  document.getElementById('cfg-client-id').value = cfg.clientId || DEFAULTS.clientId;
+  document.getElementById('cfg-tenant-id').value = cfg.tenantId || DEFAULTS.tenantId;
   if (cfg.siteUrl) document.getElementById('cfg-site-url').value = cfg.siteUrl;
-  if (cfg.library) document.getElementById('cfg-library').value = cfg.library;
+  document.getElementById('cfg-library').value = cfg.library || DEFAULTS.library;
   if (cfg.filePath) document.getElementById('cfg-file-path').value = cfg.filePath;
   if (cfg.sheet) document.getElementById('cfg-sheet').value = cfg.sheet;
   if (cfg.validateCol) document.getElementById('cfg-validate-col').value = cfg.validateCol;
