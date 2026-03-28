@@ -448,11 +448,8 @@ async function login() {
   };
 
   try {
-    const response = await msalInstance.loginPopup(loginRequest);
-    currentAccount = response.account;
-    updateUserUI(currentAccount);
-    toast(`Bienvenue, ${currentAccount.name} !`, 'success');
-    if (cfg.siteUrl && cfg.filePath) await loadExcelFile(cfg);
+    // Utilise redirect au lieu de popup (évite le blocage des popups)
+    await msalInstance.loginRedirect(loginRequest);
   } catch (e) {
     console.error(e);
     toast('Erreur de connexion : ' + (e.message || e), 'error');
@@ -460,7 +457,7 @@ async function login() {
 }
 
 function logout() {
-  if (msalInstance) msalInstance.logoutPopup();
+  if (msalInstance) msalInstance.logoutRedirect();
   currentAccount = null;
   updateUserUI(null);
   showState('auth');
@@ -493,7 +490,7 @@ async function getSPToken(siteUrl) {
     account: currentAccount
   };
   try { return (await msalInstance.acquireTokenSilent(request)).accessToken; }
-  catch { return (await msalInstance.acquireTokenPopup(request)).accessToken; }
+  catch { await msalInstance.acquireTokenRedirect(request); return ''; }
 }
 
 async function spGetBinary(siteUrl, serverRelPath) {
@@ -887,19 +884,22 @@ function escHtml(str) {
   if (cfg.clientId && cfg.tenantId) {
     initMsal(cfg);
     // Vérifier si déjà connecté (session)
-    msalInstance.handleRedirectPromise().then(resp => {
+    msalInstance.handleRedirectPromise().then(async resp => {
       if (resp) {
         currentAccount = resp.account;
         updateUserUI(currentAccount);
-        if (cfg.siteUrl && cfg.filePath) loadExcelFile(cfg);
+        toast(`Bienvenue, ${currentAccount.name} !`, 'success');
+        if (cfg.siteUrl && cfg.filePath) await loadExcelFile(cfg);
       } else {
         const accounts = msalInstance.getAllAccounts();
         if (accounts.length) {
           currentAccount = accounts[0];
           updateUserUI(currentAccount);
+          // Relancer le chargement si config complète
+          if (cfg.siteUrl && cfg.filePath) await loadExcelFile(cfg);
         }
       }
-    }).catch(console.error);
+    }).catch(e => { console.error(e); toast('Erreur auth : ' + e.message, 'error'); });
   }
 })();
 </script>
