@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Validation des Encours – SharePoint</title>
+
+  <!-- MSAL.js pour l'authentification Microsoft -->
+  <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+  <!-- SheetJS pour lire/écrire Excel -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+  <style>
+    :root {
+      --primary: #0078d4;
+      --primary-dark: #005a9e;
+      --success: #107c10;
+      --warning: #f59b00;
+      --danger: #d13438;
+      --bg: #f3f2f1;
+      --surface: #ffffff;
+      --border: #d2d0ce;
+      --text: #201f1e;
+      --text-muted: #605e5c;
+      --sidebar-w: 320px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* ── HEADER ── */
+    header {
+      background: var(--primary);
+      color: #fff;
+      padding: 0 24px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 4px rgba(0,0,0,.2);
+      position: sticky; top: 0; z-index: 100;
+    }
+    header h1 { font-size: 18px; font-weight: 600; letter-spacing: .3px; }
+    #user-info { font-size: 13px; display: flex; align-items: center; gap: 12px; }
+    #user-name { opacity: .9; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 4px; border: none; cursor: pointer; font-size: 13px; font-weight: 500; transition: background .15s; }
+    .btn-primary { background: #fff; color: var(--primary); }
+    .btn-primary:hover { background: #e1effa; }
+    .btn-outline { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.5); }
+    .btn-outline:hover { background: rgba(255,255,255,.1); }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-danger:hover { background: #a4262b; }
+    .btn-success { background: var(--success); color: #fff; }
+    .btn-success:hover { background: #0b5e0b; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+    /* ── LAYOUT ── */
+    .app-layout { display: flex; height: calc(100vh - 48px); overflow: hidden; }
+
+    /* ── SIDEBAR / CONFIG ── */
+    aside {
+      width: var(--sidebar-w);
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      overflow-y: auto;
+      flex-shrink: 0;
+      transition: width .25s;
+    }
+    aside.collapsed { width: 0; overflow: hidden; }
+    .aside-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .aside-header h2 { font-size: 14px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .5px; }
+    .aside-body { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+    .form-group { display: flex; flex-direction: column; gap: 4px; }
+    .form-group label { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+    .form-group input, .form-group select {
+      border: 1px solid var(--border); border-radius: 4px; padding: 7px 10px; font-size: 13px; color: var(--text);
+      background: #faf9f8; outline: none; transition: border .15s;
+    }
+    .form-group input:focus, .form-group select:focus { border-color: var(--primary); background: #fff; }
+    .form-group .hint { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
+    .divider { height: 1px; background: var(--border); margin: 4px 0; }
+    .section-title { font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 2px; }
+
+    /* ── MAIN ── */
+    main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+    /* TOOLBAR */
+    .toolbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 16px;
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    .toolbar-left { display: flex; align-items: center; gap: 8px; flex: 1; }
+    .toolbar-right { display: flex; align-items: center; gap: 8px; }
+    #search-box {
+      border: 1px solid var(--border); border-radius: 4px;
+      padding: 6px 12px; font-size: 13px; width: 260px; outline: none;
+    }
+    #search-box:focus { border-color: var(--primary); }
+    .filter-group { display: flex; align-items: center; gap: 6px; }
+    .filter-group label { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+    .filter-group select { border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px; font-size: 13px; }
+    .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+    .badge-info { background: #dde7f5; color: var(--primary-dark); }
+    .badge-success { background: #dff6dd; color: var(--success); }
+
+    /* STATES */
+    #state-empty, #state-loading, #state-auth {
+      flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: var(--text-muted);
+    }
+    .state-icon { font-size: 64px; opacity: .3; }
+    .state-text { font-size: 15px; text-align: center; }
+
+    /* TABLE WRAPPER */
+    .table-wrapper { flex: 1; overflow: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead { position: sticky; top: 0; z-index: 10; }
+    thead th {
+      background: #f0eeec; border-bottom: 2px solid var(--border);
+      padding: 9px 12px; text-align: left; font-weight: 600;
+      white-space: nowrap; cursor: pointer; user-select: none;
+    }
+    thead th:hover { background: #e5e3e1; }
+    thead th.sorted-asc::after { content: ' ↑'; color: var(--primary); }
+    thead th.sorted-desc::after { content: ' ↓'; color: var(--primary); }
+    thead th.col-validate { width: 80px; text-align: center; cursor: default; }
+    thead th.col-actions { width: 80px; text-align: center; cursor: default; }
+
+    tbody tr { border-bottom: 1px solid #edebe9; transition: background .1s; }
+    tbody tr:hover { background: #faf9f8; }
+    tbody tr.validated { background: #f0fff0; }
+    tbody tr.validated:hover { background: #e6ffe6; }
+    tbody td { padding: 8px 12px; vertical-align: middle; }
+    tbody td.col-validate { text-align: center; }
+    tbody td.col-actions { text-align: center; white-space: nowrap; }
+    .checkbox-validate { width: 18px; height: 18px; cursor: pointer; accent-color: var(--success); }
+    .cell-edit { background: transparent; border: none; font: inherit; color: inherit; width: 100%; min-width: 60px; padding: 2px 4px; border-radius: 3px; }
+    .cell-edit:focus { background: #fff; border: 1px solid var(--primary); outline: none; box-shadow: 0 0 0 2px rgba(0,120,212,.2); }
+    .cell-modified { background: #fffbe6 !important; }
+    .cell-modified .cell-edit { background: #fffbe6; }
+    .icon-btn { background: none; border: none; cursor: pointer; padding: 3px; border-radius: 3px; font-size: 15px; transition: background .1s; }
+    .icon-btn:hover { background: var(--bg); }
+
+    /* FOOTER BAR */
+    .footer-bar {
+      background: var(--surface); border-top: 1px solid var(--border);
+      padding: 8px 16px; display: flex; align-items: center; gap: 16px;
+      font-size: 12px; color: var(--text-muted); flex-wrap: wrap;
+    }
+    .footer-bar .spacer { flex: 1; }
+
+    /* MODALS */
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 200;
+      display: none; align-items: center; justify-content: center;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      background: var(--surface); border-radius: 8px; padding: 28px;
+      max-width: 520px; width: 94%; box-shadow: 0 8px 32px rgba(0,0,0,.2);
+    }
+    .modal h3 { font-size: 17px; margin-bottom: 16px; }
+    .modal-footer { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+    .modal .form-group { margin-bottom: 12px; }
+
+    /* TOAST */
+    #toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 300; display: flex; flex-direction: column; gap: 8px; }
+    .toast {
+      background: #323130; color: #fff; padding: 12px 18px; border-radius: 6px;
+      font-size: 13px; box-shadow: 0 4px 12px rgba(0,0,0,.25);
+      animation: slideIn .2s ease; display: flex; align-items: center; gap: 10px;
+      max-width: 360px;
+    }
+    .toast.success { border-left: 4px solid var(--success); }
+    .toast.error { border-left: 4px solid var(--danger); }
+    .toast.info { border-left: 4px solid var(--primary); }
+    @keyframes slideIn { from { transform: translateX(40px); opacity:0; } to { transform: translateX(0); opacity:1; } }
+
+    /* SPINNER */
+    .spinner { width: 40px; height: 40px; border: 3px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* HIDE helper */
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════ HEADER ══════════════ -->
+<header>
+  <h1>📋 Validation des Encours</h1>
+  <div id="user-info">
+    <span id="user-name" class="hidden"></span>
+    <button id="btn-logout" class="btn btn-outline btn-sm hidden" onclick="logout()">Déconnexion</button>
+    <button id="btn-login" class="btn btn-primary btn-sm" onclick="login()">Se connecter</button>
+    <button id="btn-config-toggle" class="btn btn-outline btn-sm" onclick="toggleSidebar()" title="Paramètres">⚙️</button>
+  </div>
+</header>
+
+<!-- ══════════════ LAYOUT ══════════════ -->
+<div class="app-layout">
+
+  <!-- ── SIDEBAR CONFIG ── -->
+  <aside id="sidebar">
+    <div class="aside-header">
+      <h2>⚙ Configuration</h2>
+      <button class="icon-btn" onclick="toggleSidebar()" title="Fermer">✕</button>
+    </div>
+    <div class="aside-body">
+      <p class="section-title">🔑 Azure AD</p>
+      <div class="form-group">
+        <label>Client ID (Application ID)</label>
+        <input id="cfg-client-id" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+        <span class="hint">Créez une App Registration dans Azure Portal → Authentification → MSAL (SPA).</span>
+      </div>
+      <div class="form-group">
+        <label>Tenant ID (Répertoire)</label>
+        <input id="cfg-tenant-id" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+        <span class="hint">Disponible dans Azure Portal → Azure Active Directory → Propriétés.</span>
+      </div>
+
+      <div class="divider"></div>
+      <p class="section-title">📂 Fichier SharePoint</p>
+      <div class="form-group">
+        <label>URL du site SharePoint</label>
+        <input id="cfg-site-url" type="text" placeholder="https://contoso.sharepoint.com/sites/MonSite" />
+      </div>
+      <div class="form-group">
+        <label>Bibliothèque</label>
+        <input id="cfg-library" type="text" placeholder="Documents partagés" value="Documents partagés" />
+        <span class="hint">Nom exact de la bibliothèque (ex: "Documents partagés" ou "Shared Documents").</span>
+      </div>
+      <div class="form-group">
+        <label>Chemin du fichier Excel</label>
+        <input id="cfg-file-path" type="text" placeholder="/Encours/suivi-encours.xlsx" />
+        <span class="hint">Chemin relatif depuis la racine de la bibliothèque.</span>
+      </div>
+      <div class="form-group">
+        <label>Feuille (onglet)</label>
+        <input id="cfg-sheet" type="text" placeholder="Feuil1" />
+        <span class="hint">Laisser vide pour utiliser le premier onglet.</span>
+      </div>
+
+      <div class="divider"></div>
+      <p class="section-title">✅ Colonne de validation</p>
+      <div class="form-group">
+        <label>Nom de la colonne "Validé" (optionnel)</label>
+        <input id="cfg-validate-col" type="text" placeholder="Statut" />
+        <span class="hint">Si vide, une colonne de validation sera ajoutée automatiquement.</span>
+      </div>
+
+      <div class="divider"></div>
+      <button class="btn btn-primary" style="width:100%;justify-content:center;" onclick="saveConfigAndLoad()">💾 Enregistrer et charger</button>
+      <div class="divider"></div>
+      <p class="section-title">📌 Guide de connexion</p>
+      <div class="hint" style="line-height:1.6">
+        1. Créer une <strong>App Registration</strong> dans Azure Portal<br>
+        2. Ajouter une plateforme <strong>SPA</strong> avec comme URI de redirection l'URL de cette page (ou <code>http://localhost</code> pour les tests)<br>
+        3. Ajouter les permissions API : <strong>Files.ReadWrite</strong> et <strong>Sites.ReadWrite.All</strong> (délégué)<br>
+        4. Saisir Client ID et Tenant ID ci-dessus<br>
+        5. Cliquer "Se connecter"
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── MAIN CONTENT ── -->
+  <main>
+
+    <!-- TOOLBAR -->
+    <div class="toolbar hidden" id="toolbar">
+      <div class="toolbar-left">
+        <input id="search-box" type="search" placeholder="🔍 Rechercher dans les encours…" oninput="applyFilters()" />
+        <div class="filter-group">
+          <label>Statut :</label>
+          <select id="filter-status" onchange="applyFilters()">
+            <option value="">Tous</option>
+            <option value="validated">Validés ✅</option>
+            <option value="pending">En attente</option>
+          </select>
+        </div>
+        <div class="filter-group" id="extra-filter-group" style="display:none">
+          <label id="extra-filter-label">Filtrer :</label>
+          <select id="extra-filter" onchange="applyFilters()"><option value="">Tous</option></select>
+        </div>
+      </div>
+      <div class="toolbar-right">
+        <span class="badge badge-info" id="badge-total">0 lignes</span>
+        <span class="badge badge-success" id="badge-validated">0 validées</span>
+        <button class="btn btn-success btn-sm" onclick="exportExcel()">⬇️ Exporter Excel</button>
+        <button class="btn btn-primary btn-sm" onclick="saveToSharePoint()">☁️ Sauvegarder</button>
+      </div>
+    </div>
+
+    <!-- STATE: AUTH -->
+    <div id="state-auth">
+      <div class="state-icon">🔐</div>
+      <div class="state-text">
+        Configurez vos paramètres Azure AD et SharePoint<br>
+        puis connectez-vous pour charger les encours.
+      </div>
+      <button class="btn btn-primary" onclick="login()">Se connecter avec Microsoft</button>
+    </div>
+
+    <!-- STATE: LOADING -->
+    <div id="state-loading" class="hidden">
+      <div class="spinner"></div>
+      <div class="state-text" id="loading-text">Chargement…</div>
+    </div>
+
+    <!-- STATE: EMPTY -->
+    <div id="state-empty" class="hidden">
+      <div class="state-icon">📭</div>
+      <div class="state-text">Aucune donnée trouvée dans le fichier.</div>
+    </div>
+
+    <!-- DATA TABLE -->
+    <div class="table-wrapper hidden" id="table-wrapper">
+      <table id="data-table">
+        <thead id="table-head"></thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+
+    <!-- FOOTER BAR -->
+    <div class="footer-bar hidden" id="footer-bar">
+      <span id="footer-info">–</span>
+      <span class="spacer"></span>
+      <span id="footer-modified" style="color:var(--warning)"></span>
+      <span id="footer-file" style="font-style:italic"></span>
+    </div>
+
+  </main>
+</div>
+
+<!-- ══════════════ TOAST CONTAINER ══════════════ -->
+<div id="toast-container"></div>
+
+<!-- ══════════════ MODAL CONFIRMATION ══════════════ -->
+<div class="modal-backdrop" id="modal-save">
+  <div class="modal">
+    <h3>☁️ Sauvegarder vers SharePoint</h3>
+    <p>Cette action va écraser le fichier Excel sur SharePoint avec vos modifications. Voulez-vous continuer ?</p>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-save')">Annuler</button>
+      <button class="btn btn-success" onclick="confirmSave()">Confirmer et sauvegarder</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ SCRIPT ══════════════ -->
+<script>
+// ═══════════════════════════════════════════════════
+// CONFIG & STATE
+// ═══════════════════════════════════════════════════
+const CONFIG_KEY = 'encours_config_v2';
+
+let msalInstance = null;
+let currentAccount = null;
+let allRows = [];        // données complètes
+let filteredRows = [];   // après filtres
+let columns = [];        // noms des colonnes du fichier
+let validateColName = '_VALIDÉ_';
+let sortCol = null, sortDir = 1;
+let modifiedCells = new Set(); // 'rowIdx-colIdx'
+let fileItemId = null;  // ID de l'item SharePoint pour sauvegarder
+let originalWorkbook = null; // workbook XLSX original
+
+// ═══════════════════════════════════════════════════
+// CONFIGURATION
+// ═══════════════════════════════════════════════════
+function loadConfig() {
+  try { return JSON.parse(localStorage.getItem(CONFIG_KEY)) || {}; } catch { return {}; }
+}
+function saveConfig(cfg) { localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg)); }
+
+function getConfig() {
+  return {
+    clientId: document.getElementById('cfg-client-id').value.trim(),
+    tenantId: document.getElementById('cfg-tenant-id').value.trim(),
+    siteUrl: document.getElementById('cfg-site-url').value.trim(),
+    library: document.getElementById('cfg-library').value.trim() || 'Documents partagés',
+    filePath: document.getElementById('cfg-file-path').value.trim(),
+    sheet: document.getElementById('cfg-sheet').value.trim(),
+    validateCol: document.getElementById('cfg-validate-col').value.trim()
+  };
+}
+
+function applyConfigToUI(cfg) {
+  if (!cfg) return;
+  if (cfg.clientId) document.getElementById('cfg-client-id').value = cfg.clientId;
+  if (cfg.tenantId) document.getElementById('cfg-tenant-id').value = cfg.tenantId;
+  if (cfg.siteUrl) document.getElementById('cfg-site-url').value = cfg.siteUrl;
+  if (cfg.library) document.getElementById('cfg-library').value = cfg.library;
+  if (cfg.filePath) document.getElementById('cfg-file-path').value = cfg.filePath;
+  if (cfg.sheet) document.getElementById('cfg-sheet').value = cfg.sheet;
+  if (cfg.validateCol) document.getElementById('cfg-validate-col').value = cfg.validateCol;
+}
+
+async function saveConfigAndLoad() {
+  const cfg = getConfig();
+  if (!cfg.clientId || !cfg.tenantId) { toast('⚠️ Client ID et Tenant ID requis.', 'error'); return; }
+  if (!cfg.siteUrl || !cfg.filePath) { toast('⚠️ URL SharePoint et chemin du fichier requis.', 'error'); return; }
+  saveConfig(cfg);
+  toast('Configuration enregistrée.', 'success');
+  initMsal(cfg);
+  if (currentAccount) await loadExcelFile(cfg);
+}
+
+// ═══════════════════════════════════════════════════
+// MSAL – AUTHENTIFICATION
+// ═══════════════════════════════════════════════════
+function initMsal(cfg) {
+  const msalConfig = {
+    auth: {
+      clientId: cfg.clientId,
+      authority: `https://login.microsoftonline.com/${cfg.tenantId}`,
+      redirectUri: window.location.href.split('?')[0].split('#')[0]
+    },
+    cache: { cacheLocation: 'sessionStorage', storeAuthStateInCookie: false }
+  };
+  msalInstance = new msal.PublicClientApplication(msalConfig);
+}
+
+async function login() {
+  const cfg = getConfig();
+  if (!cfg.clientId || !cfg.tenantId) {
+    toast('⚠️ Configurez d\'abord le Client ID et le Tenant ID.', 'error');
+    document.getElementById('sidebar').classList.remove('collapsed');
+    return;
+  }
+  saveConfig(cfg);
+  if (!msalInstance) initMsal(cfg);
+
+  const loginRequest = {
+    scopes: ['User.Read', 'Files.ReadWrite', 'Sites.ReadWrite.All']
+  };
+
+  try {
+    const response = await msalInstance.loginPopup(loginRequest);
+    currentAccount = response.account;
+    updateUserUI(currentAccount);
+    toast(`Bienvenue, ${currentAccount.name} !`, 'success');
+    if (cfg.siteUrl && cfg.filePath) await loadExcelFile(cfg);
+  } catch (e) {
+    console.error(e);
+    toast('Erreur de connexion : ' + (e.message || e), 'error');
+  }
+}
+
+function logout() {
+  if (msalInstance) msalInstance.logoutPopup();
+  currentAccount = null;
+  updateUserUI(null);
+  showState('auth');
+  allRows = []; filteredRows = []; columns = [];
+}
+
+function updateUserUI(account) {
+  const btnLogin = document.getElementById('btn-login');
+  const btnLogout = document.getElementById('btn-logout');
+  const userName = document.getElementById('user-name');
+  if (account) {
+    btnLogin.classList.add('hidden');
+    btnLogout.classList.remove('hidden');
+    userName.textContent = account.name || account.username;
+    userName.classList.remove('hidden');
+  } else {
+    btnLogin.classList.remove('hidden');
+    btnLogout.classList.add('hidden');
+    userName.classList.add('hidden');
+  }
+}
+
+async function getToken() {
+  const cfg = loadConfig();
+  const request = {
+    scopes: ['Files.ReadWrite', 'Sites.ReadWrite.All'],
+    account: currentAccount
+  };
+  try { return (await msalInstance.acquireTokenSilent(request)).accessToken; }
+  catch { return (await msalInstance.acquireTokenPopup(request)).accessToken; }
+}
+
+// ═══════════════════════════════════════════════════
+// GRAPH API – SHAREPOINT
+// ═══════════════════════════════════════════════════
+async function graphGet(url) {
+  const token = await getToken();
+  const r = await fetch(`https://graph.microsoft.com/v1.0${url}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!r.ok) { const err = await r.json().catch(() => ({})); throw new Error(err.error?.message || r.statusText); }
+  return r.json();
+}
+
+async function graphGetBinary(url) {
+  const token = await getToken();
+  const r = await fetch(`https://graph.microsoft.com/v1.0${url}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!r.ok) throw new Error(r.statusText);
+  return r.arrayBuffer();
+}
+
+async function graphPut(url, body) {
+  const token = await getToken();
+  const r = await fetch(`https://graph.microsoft.com/v1.0${url}`, {
+    method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream' },
+    body
+  });
+  if (!r.ok) { const err = await r.json().catch(() => ({})); throw new Error(err.error?.message || r.statusText); }
+  return r.json();
+}
+
+// Extraire le hostname SharePoint
+function parseSiteUrl(siteUrl) {
+  const url = new URL(siteUrl);
+  const host = url.hostname;         // ex: contoso.sharepoint.com
+  const sitePath = url.pathname;     // ex: /sites/MonSite
+  return { host, sitePath };
+}
+
+async function getSiteId(cfg) {
+  const { host, sitePath } = parseSiteUrl(cfg.siteUrl);
+  const data = await graphGet(`/sites/${host}:${sitePath}`);
+  return data.id;
+}
+
+async function getDriveId(siteId, library) {
+  const data = await graphGet(`/sites/${siteId}/drives`);
+  const drive = data.value.find(d => d.name === library || d.webUrl?.endsWith('/' + encodeURIComponent(library)));
+  if (!drive) throw new Error(`Bibliothèque "${library}" introuvable. Vérifiez le nom exact.`);
+  return drive.id;
+}
+
+async function loadExcelFile(cfg) {
+  if (!currentAccount) { toast('Connectez-vous d\'abord.', 'error'); return; }
+  showState('loading', 'Connexion à SharePoint…');
+  try {
+    const siteId = await getSiteId(cfg);
+    setLoadingText('Recherche de la bibliothèque…');
+    const driveId = await getDriveId(siteId, cfg.library);
+    setLoadingText('Chargement du fichier Excel…');
+
+    // Nettoyer le chemin
+    let filePath = cfg.filePath.startsWith('/') ? cfg.filePath : '/' + cfg.filePath;
+    const fileData = await graphGet(`/drives/${driveId}/root:${filePath}`);
+    fileItemId = { driveId, itemId: fileData.id };
+    document.getElementById('footer-file').textContent = fileData.name;
+
+    // Télécharger le contenu binaire
+    const buffer = await graphGetBinary(`/drives/${driveId}/items/${fileData.id}/content`);
+
+    setLoadingText('Analyse du fichier Excel…');
+    parseExcel(buffer, cfg);
+
+  } catch (e) {
+    console.error(e);
+    toast('Erreur : ' + e.message, 'error');
+    showState('auth');
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// EXCEL – PARSE
+// ═══════════════════════════════════════════════════
+function parseExcel(buffer, cfg) {
+  const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
+  originalWorkbook = wb;
+
+  const sheetName = cfg.sheet || wb.SheetNames[0];
+  const ws = wb.Sheets[sheetName];
+  if (!ws) { toast(`Feuille "${sheetName}" introuvable.`, 'error'); showState('auth'); return; }
+
+  const data = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+  if (!data.length) { showState('empty'); return; }
+
+  columns = Object.keys(data[0]);
+
+  // Déterminer la colonne de validation
+  const cfgVal = cfg.validateCol;
+  if (cfgVal && columns.includes(cfgVal)) {
+    validateColName = cfgVal;
+  } else {
+    validateColName = '_VALIDÉ_';
+    if (!columns.includes(validateColName)) columns.push(validateColName);
+  }
+
+  allRows = data.map((row, i) => {
+    if (!(validateColName in row)) row[validateColName] = '';
+    row.__rowIndex = i;
+    return row;
+  });
+
+  buildExtraFilter();
+  applyFilters();
+  renderTable();
+  showState('table');
+  toast(`${allRows.length} encours chargés avec succès.`, 'success');
+}
+
+// ═══════════════════════════════════════════════════
+// FILTRES & RENDU
+// ═══════════════════════════════════════════════════
+function buildExtraFilter() {
+  // Trouver une colonne intéressante pour un filtre rapide (ex: "Client", "Société"…)
+  const candidates = columns.filter(c => c !== validateColName && !c.startsWith('__'));
+  const preferred = candidates.find(c => /client|société|soci.t.|entité|entity|catégorie|type/i.test(c));
+  const col = preferred || candidates[1];
+  if (!col) return;
+
+  const grp = document.getElementById('extra-filter-group');
+  const lbl = document.getElementById('extra-filter-label');
+  const sel = document.getElementById('extra-filter');
+  lbl.textContent = col + ' :';
+  const vals = [...new Set(allRows.map(r => String(r[col] || '')).filter(Boolean))].sort();
+  sel.innerHTML = '<option value="">Tous</option>' + vals.map(v => `<option>${v}</option>`).join('');
+  sel._col = col;
+  grp.style.display = vals.length > 1 ? 'flex' : 'none';
+}
+
+function applyFilters() {
+  const search = document.getElementById('search-box').value.toLowerCase();
+  const status = document.getElementById('filter-status').value;
+  const extraSel = document.getElementById('extra-filter');
+  const extraVal = extraSel.value;
+  const extraCol = extraSel._col;
+
+  filteredRows = allRows.filter(row => {
+    if (status === 'validated' && !isValidated(row)) return false;
+    if (status === 'pending' && isValidated(row)) return false;
+    if (extraVal && extraCol && String(row[extraCol] || '') !== extraVal) return false;
+    if (search) {
+      const haystack = columns.filter(c => !c.startsWith('__')).map(c => String(row[c] || '')).join(' ').toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+    return true;
+  });
+
+  if (sortCol !== null) {
+    filteredRows.sort((a, b) => {
+      const va = String(a[columns[sortCol]] || '');
+      const vb = String(b[columns[sortCol]] || '');
+      return va.localeCompare(vb, 'fr', { numeric: true }) * sortDir;
+    });
+  }
+
+  renderRows();
+  updateBadges();
+}
+
+function isValidated(row) {
+  const v = String(row[validateColName] || '').toLowerCase();
+  return v === 'oui' || v === 'true' || v === '1' || v === 'validé' || v === 'x';
+}
+
+// ═══════════════════════════════════════════════════
+// RENDU TABLE
+// ═══════════════════════════════════════════════════
+function renderTable() {
+  const thead = document.getElementById('table-head');
+  const visibleCols = columns.filter(c => !c.startsWith('__') && c !== validateColName);
+
+  let html = '<tr>';
+  html += `<th class="col-validate">✅ Validé</th>`;
+  visibleCols.forEach((col, i) => {
+    const cls = sortCol === i ? (sortDir === 1 ? 'sorted-asc' : 'sorted-desc') : '';
+    html += `<th class="${cls}" onclick="sortBy(${i})">${escHtml(col)}</th>`;
+  });
+  html += `<th class="col-actions">Actions</th>`;
+  html += '</tr>';
+  thead.innerHTML = html;
+
+  renderRows();
+}
+
+function renderRows() {
+  const tbody = document.getElementById('table-body');
+  const visibleCols = columns.filter(c => !c.startsWith('__') && c !== validateColName);
+
+  if (!filteredRows.length) {
+    tbody.innerHTML = `<tr><td colspan="${visibleCols.length + 2}" style="text-align:center;padding:32px;color:var(--text-muted)">Aucun résultat pour ces filtres.</td></tr>`;
+    return;
+  }
+
+  let html = '';
+  filteredRows.forEach(row => {
+    const ri = row.__rowIndex;
+    const validated = isValidated(row);
+    html += `<tr class="${validated ? 'validated' : ''}" data-row="${ri}">`;
+    // Checkbox validation
+    html += `<td class="col-validate"><input type="checkbox" class="checkbox-validate" ${validated ? 'checked' : ''} onchange="toggleValidate(${ri}, this.checked)"/></td>`;
+    // Colonnes modifiables
+    visibleCols.forEach((col, ci) => {
+      const cellKey = `${ri}-${ci}`;
+      const isModified = modifiedCells.has(cellKey);
+      const val = escHtml(String(row[col] ?? ''));
+      html += `<td class="${isModified ? 'cell-modified' : ''}">
+        <input class="cell-edit" type="text" value="${val}"
+          data-row="${ri}" data-col="${escHtml(col)}" data-ci="${ci}"
+          onchange="cellChanged(this)"
+          onblur="cellChanged(this)"
+        />
+      </td>`;
+    });
+    // Actions
+    html += `<td class="col-actions">
+      <button class="icon-btn" title="Réinitialiser la ligne" onclick="resetRow(${ri})">↩️</button>
+    </td>`;
+    html += '</tr>';
+  });
+  tbody.innerHTML = html;
+}
+
+function updateBadges() {
+  document.getElementById('badge-total').textContent = `${filteredRows.length} ligne${filteredRows.length !== 1 ? 's' : ''}`;
+  const nbVal = allRows.filter(isValidated).length;
+  document.getElementById('badge-validated').textContent = `${nbVal} validée${nbVal !== 1 ? 's' : ''}`;
+  const pct = allRows.length ? Math.round(nbVal / allRows.length * 100) : 0;
+  document.getElementById('footer-info').textContent = `${nbVal} / ${allRows.length} validées (${pct}%) — ${filteredRows.length} affiché(s)`;
+  const nbModif = modifiedCells.size;
+  document.getElementById('footer-modified').textContent = nbModif ? `${nbModif} modification${nbModif > 1 ? 's' : ''} non sauvegardée${nbModif > 1 ? 's' : ''}` : '';
+}
+
+// ═══════════════════════════════════════════════════
+// INTERACTIONS
+// ═══════════════════════════════════════════════════
+function toggleValidate(rowIndex, checked) {
+  allRows[rowIndex][validateColName] = checked ? 'Oui' : '';
+  markModified();
+  // Mettre à jour la ligne dans le DOM
+  const tr = document.querySelector(`tr[data-row="${rowIndex}"]`);
+  if (tr) tr.className = checked ? 'validated' : '';
+  updateBadges();
+}
+
+function cellChanged(input) {
+  const ri = parseInt(input.dataset.row);
+  const col = input.dataset.col;
+  const ci = parseInt(input.dataset.ci);
+  const newVal = input.value;
+  if (String(allRows[ri][col] ?? '') === newVal) return;
+  allRows[ri][col] = newVal;
+  modifiedCells.add(`${ri}-${ci}`);
+  input.closest('td').classList.add('cell-modified');
+  markModified();
+  updateBadges();
+}
+
+function resetRow(rowIndex) {
+  if (!confirm('Réinitialiser les modifications de cette ligne ?')) return;
+  const visibleCols = columns.filter(c => !c.startsWith('__') && c !== validateColName);
+  visibleCols.forEach((_, ci) => modifiedCells.delete(`${rowIndex}-${ci}`));
+  // Recharger la valeur depuis le workbook original
+  toast('Ligne réinitialisée (rechargez le fichier pour restaurer les valeurs d\'origine).', 'info');
+  renderRows(); updateBadges();
+}
+
+function markModified() { /* Indicateur dans le footer géré par updateBadges */ }
+
+function sortBy(colIndex) {
+  if (sortCol === colIndex) sortDir *= -1;
+  else { sortCol = colIndex; sortDir = 1; }
+  applyFilters();
+  renderTable();
+}
+
+// ═══════════════════════════════════════════════════
+// EXPORT EXCEL
+// ═══════════════════════════════════════════════════
+function exportExcel() {
+  const visibleCols = columns.filter(c => !c.startsWith('__'));
+  const exportData = filteredRows.map(row => {
+    const out = {};
+    visibleCols.forEach(c => { out[c] = row[c]; });
+    return out;
+  });
+  const ws = XLSX.utils.json_to_sheet(exportData, { header: visibleCols });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Encours');
+  const date = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(wb, `encours-validation-${date}.xlsx`);
+  toast('Export téléchargé avec succès.', 'success');
+}
+
+// ═══════════════════════════════════════════════════
+// SAUVEGARDE SHAREPOINT
+// ═══════════════════════════════════════════════════
+function saveToSharePoint() {
+  if (!fileItemId) { toast('Aucun fichier chargé.', 'error'); return; }
+  openModal('modal-save');
+}
+
+async function confirmSave() {
+  closeModal('modal-save');
+  if (!originalWorkbook) { toast('Workbook non disponible.', 'error'); return; }
+  showState('loading', 'Sauvegarde en cours…');
+
+  try {
+    const cfg = loadConfig();
+    const sheetName = cfg.sheet || originalWorkbook.SheetNames[0];
+
+    // Reconstruire la feuille avec les données modifiées
+    const visibleCols = columns.filter(c => !c.startsWith('__'));
+    const exportData = allRows.map(row => {
+      const out = {};
+      visibleCols.forEach(c => { out[c] = row[c]; });
+      return out;
+    });
+    const newWs = XLSX.utils.json_to_sheet(exportData, { header: visibleCols });
+    originalWorkbook.Sheets[sheetName] = newWs;
+
+    // Exporter en buffer
+    const buf = XLSX.write(originalWorkbook, { type: 'array', bookType: 'xlsx' });
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+    // Upload vers SharePoint via Graph API
+    const { driveId, itemId } = fileItemId;
+    await graphPut(`/drives/${driveId}/items/${itemId}/content`, blob);
+
+    modifiedCells.clear();
+    showState('table');
+    updateBadges();
+    toast('Fichier sauvegardé sur SharePoint avec succès.', 'success');
+
+  } catch (e) {
+    console.error(e);
+    toast('Erreur lors de la sauvegarde : ' + e.message, 'error');
+    showState('table');
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// ÉTATS UI
+// ═══════════════════════════════════════════════════
+function showState(state, loadingText = 'Chargement…') {
+  document.getElementById('state-auth').classList.add('hidden');
+  document.getElementById('state-loading').classList.add('hidden');
+  document.getElementById('state-empty').classList.add('hidden');
+  document.getElementById('table-wrapper').classList.add('hidden');
+  document.getElementById('toolbar').classList.add('hidden');
+  document.getElementById('footer-bar').classList.add('hidden');
+
+  if (state === 'auth') document.getElementById('state-auth').classList.remove('hidden');
+  else if (state === 'loading') {
+    document.getElementById('state-loading').classList.remove('hidden');
+    setLoadingText(loadingText);
+  }
+  else if (state === 'empty') document.getElementById('state-empty').classList.remove('hidden');
+  else if (state === 'table') {
+    document.getElementById('table-wrapper').classList.remove('hidden');
+    document.getElementById('toolbar').classList.remove('hidden');
+    document.getElementById('footer-bar').classList.remove('hidden');
+  }
+}
+
+function setLoadingText(text) {
+  document.getElementById('loading-text').textContent = text;
+}
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('collapsed');
+}
+
+// ═══════════════════════════════════════════════════
+// MODALS & TOAST
+// ═══════════════════════════════════════════════════
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+function toast(msg, type = 'info') {
+  const c = document.getElementById('toast-container');
+  const div = document.createElement('div');
+  div.className = `toast ${type}`;
+  div.textContent = msg;
+  c.appendChild(div);
+  setTimeout(() => div.remove(), 4000);
+}
+
+// ═══════════════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════════════
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ═══════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════
+(function init() {
+  const cfg = loadConfig();
+  applyConfigToUI(cfg);
+  if (cfg.clientId && cfg.tenantId) {
+    initMsal(cfg);
+    // Vérifier si déjà connecté (session)
+    msalInstance.handleRedirectPromise().then(resp => {
+      if (resp) {
+        currentAccount = resp.account;
+        updateUserUI(currentAccount);
+        if (cfg.siteUrl && cfg.filePath) loadExcelFile(cfg);
+      } else {
+        const accounts = msalInstance.getAllAccounts();
+        if (accounts.length) {
+          currentAccount = accounts[0];
+          updateUserUI(currentAccount);
+        }
+      }
+    }).catch(console.error);
+  }
+})();
+</script>
+</body>
+</html>
